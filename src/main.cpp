@@ -8,6 +8,17 @@
 #include "subscription_generator.h"
 #include "writer.h"
 
+
+#include <ctime>
+
+std::string getTimestamp() {
+    std::time_t now = std::time(nullptr);
+    char buf[20];
+    std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", std::localtime(&now));
+    return buf;
+}
+
+
 struct RunStats {
     size_t publications = 0;
     size_t subscriptions = 0;
@@ -33,8 +44,11 @@ static RunStats runScenario(const Config& baseConfig,
 
     if (writeFiles) {
         std::filesystem::create_directories("output");
-        const std::string pubFile = outputPrefix + "publications.txt";
-        const std::string subFile = outputPrefix + "subscriptions.txt";
+
+        std::string ts = getTimestamp();
+
+        const std::string pubFile = outputPrefix + "publications_" + ts + "_" + std::to_string(numThreads) + "threads.txt";
+        const std::string subFile = outputPrefix + "subscriptions.txt"+ ts + "_" + std::to_string(numThreads) + "threads.txt";
         writePublicationsToFile(pubFile, publications);
         writeSubscriptionsToFile(subFile, subscriptions);
     }
@@ -57,8 +71,8 @@ static RunStats runScenario(const Config& baseConfig,
 int main() {
     Config config;
 
-    config.numPublications = 200000;
-    config.numSubscriptions = 200000;
+   // config.numPublications = 200000;
+    //config.numSubscriptions = 200000;
 
     std::cout << "=== Benchmark (fara scriere in fisier) ===\n";
     for (size_t threads : {1u, 4u}) {
@@ -70,8 +84,10 @@ int main() {
                   << " | Total: " << stats.totalSec << " sec\n";
     }
 
+   
+
     std::cout << "\n=== Generare finala cu scriere in output/ ===\n";
-    RunStats finalStats = runScenario(config, 4, true, "output/");
+    RunStats finalStats = runScenario(config, 3, true, "output/");
 
     std::cout << "Publicatii generate   : " << finalStats.publications << "\n";
     std::cout << "Subscriptii generate  : " << finalStats.subscriptions << "\n";

@@ -14,21 +14,17 @@ enum class FieldType {
     DATE
 };
 
-// =====================
-// Tipuri de operatori
-// =====================
+
 enum class OperatorType {
-    EQ,   // =
-    NEQ,  // !=
-    LT,   // <
-    LE,   // <=
-    GT,   // >
-    GE    // >=
+    EQ,   
+    NEQ,  
+    LT,  
+    LE,   
+    GT,   
+    GE    
 };
 
-// =====================
 // Publication (schema fixa)
-// =====================
 struct Publication {
     std::string company;
     double value;
@@ -37,9 +33,7 @@ struct Publication {
     std::string date;
 };
 
-// =====================
 // Camp din subscription
-// =====================
 struct SubscriptionField {
     FieldType fieldType;
     OperatorType op;
@@ -49,19 +43,15 @@ struct SubscriptionField {
     double numericValue = 0.0;
 };
 
-// =====================
 // Subscription (schema variabila)
-// =====================
 struct Subscription {
     std::vector<SubscriptionField> fields;
 };
 
-// =====================
 // Configuratie generala
-// =====================
 struct Config {
     // volum date
-    size_t numPublications = 1000;
+    size_t numPublications = 100;
     size_t numSubscriptions = 1000;
     size_t numThreads = 1;
 

@@ -7,16 +7,6 @@
 #include <stdexcept>
 #include <thread>
 
-// =====================================================
-// Varianta simpla - o pastram, dar nu va fi folosita
-// in forma finala a temei
-// =====================================================
-
-static bool shouldIncludeField(std::mt19937& rng, double percentage) {
-    std::uniform_real_distribution<double> dist(0.0, 100.0);
-    return dist(rng) < percentage;
-}
-
 static OperatorType randomStringOperator(std::mt19937& rng, bool forceEquality = false) {
     if (forceEquality) {
         return OperatorType::EQ;
@@ -44,79 +34,6 @@ static OperatorType randomNumericOperator(std::mt19937& rng) {
     int index = randomInt(rng, 0, static_cast<int>(ops.size()) - 1);
     return ops[index];
 }
-
-Subscription generateSubscription(const Config& config, std::mt19937& rng) {
-    Subscription sub;
-
-    bool hasCompany = shouldIncludeField(rng, config.companyFreqPct);
-    bool hasValue = shouldIncludeField(rng, config.valueFreqPct);
-    bool hasDrop = shouldIncludeField(rng, config.dropFreqPct);
-    bool hasVariation = shouldIncludeField(rng, config.variationFreqPct);
-    bool hasDate = shouldIncludeField(rng, config.dateFreqPct);
-
-    if (!hasCompany && !hasValue && !hasDrop && !hasVariation && !hasDate) {
-        hasCompany = true;
-    }
-
-    if (hasCompany) {
-        SubscriptionField field;
-        field.fieldType = FieldType::COMPANY;
-        field.op = randomStringOperator(rng);
-        field.stringValue = randomChoice(rng, config.companies);
-        sub.fields.push_back(field);
-    }
-
-    if (hasValue) {
-        SubscriptionField field;
-        field.fieldType = FieldType::VALUE;
-        field.op = randomNumericOperator(rng);
-        field.numericValue = randomDouble(rng, config.subValueMin, config.subValueMax);
-        sub.fields.push_back(field);
-    }
-
-    if (hasDrop) {
-        SubscriptionField field;
-        field.fieldType = FieldType::DROP;
-        field.op = randomNumericOperator(rng);
-        field.numericValue = randomDouble(rng, config.subDropMin, config.subDropMax);
-        sub.fields.push_back(field);
-    }
-
-    if (hasVariation) {
-        SubscriptionField field;
-        field.fieldType = FieldType::VARIATION;
-        field.op = randomNumericOperator(rng);
-        field.numericValue = randomDouble(rng, config.subVariationMin, config.subVariationMax);
-        sub.fields.push_back(field);
-    }
-
-    if (hasDate) {
-        SubscriptionField field;
-        field.fieldType = FieldType::DATE;
-        field.op = randomStringOperator(rng);
-        field.stringValue = randomChoice(rng, config.dates);
-        sub.fields.push_back(field);
-    }
-
-    return sub;
-}
-
-std::vector<Subscription> generateSubscriptionsSimple(const Config& config) {
-    std::vector<Subscription> subscriptions;
-    subscriptions.reserve(config.numSubscriptions);
-
-    std::mt19937 rng(std::random_device{}());
-
-    for (size_t i = 0; i < config.numSubscriptions; i++) {
-        subscriptions.push_back(generateSubscription(config, rng));
-    }
-
-    return subscriptions;
-}
-
-// =====================================================
-// Varianta finala - distributie controlata
-// =====================================================
 
 struct SubscriptionPlan {
     bool hasCompany = false;
