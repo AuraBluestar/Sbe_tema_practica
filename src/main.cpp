@@ -48,7 +48,7 @@ static RunStats runScenario(const Config& baseConfig,
         std::string ts = getTimestamp();
 
         const std::string pubFile = outputPrefix + "publications_" + ts + "_" + std::to_string(numThreads) + "threads.txt";
-        const std::string subFile = outputPrefix + "subscriptions.txt"+ ts + "_" + std::to_string(numThreads) + "threads.txt";
+        const std::string subFile = outputPrefix + "subscriptions_"+ ts + "_" + std::to_string(numThreads) + "threads.txt";
         writePublicationsToFile(pubFile, publications);
         writeSubscriptionsToFile(subFile, subscriptions);
     }
