@@ -200,7 +200,7 @@ std::vector<Subscription> generateSubscriptionsBalanced(const Config& config) {
     for (int i = 0; i < N; i++) {
         subs.push_back(buildSubscription(plans[i], config, rng));
     }
-    printStats(subs);
+   // printStats(subs);
     return subs;
 }
 

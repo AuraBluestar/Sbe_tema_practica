@@ -51,18 +51,19 @@ struct Subscription {
 // Configuratie generala
 struct Config {
     // volum date
-    size_t numPublications = 3000;
-    size_t numSubscriptions = 3000;
+
+    size_t numPublications = 20000;
+    size_t numSubscriptions = 20000;
     size_t numThreads = 1;
 
     // frecventa campuri (subscriptii)
-    double companyFreqPct = 90.0;
-    double valueFreqPct = 70.0;
-    double dropFreqPct = 50.0;
-    double variationFreqPct = 60.0;
-    double dateFreqPct = 40.0;
+    double companyFreqPct = 100;
+    double valueFreqPct = 0;
+    double dropFreqPct = 0;
+    double variationFreqPct = 0;
+    double dateFreqPct = 0;
 
-    // minim procent "=" pentru company
+    // minim procent "=" , am ales company
     double companyEqMinPct = 70.0;
 
     // intervale publication
@@ -75,7 +76,7 @@ struct Config {
     double pubVariationMin = -1.0;
     double pubVariationMax = 1.0;
 
-    // intervale subscription (separate, cum a zis profesorul)
+    // intervale subscription 
     double subValueMin = 0.0;
     double subValueMax = 100.0;
 

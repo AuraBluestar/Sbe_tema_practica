@@ -2,7 +2,7 @@
 #include <filesystem>
 #include <iostream>
 #include <vector>
-
+#include "parseArgs.cpp"
 #include "models.h"
 #include "publication_generator.h"
 #include "subscription_generator.h"
@@ -70,11 +70,13 @@ static RunStats runScenario(const Config& baseConfig,
     return stats;
 }
 
-int main() {
+
+
+
+int main(int argc, char* argv[]) {
     Config config;
 
-    config.numPublications = 200000;
-    config.numSubscriptions = 200000;
+    parseArgs(argc, argv, config);
 
     std::cout << "=== Benchmark (fara scriere in fisier) ===\n";
     for (size_t threads : {1u, 4u}) {
@@ -88,8 +90,19 @@ int main() {
 
    
 
-    std::cout << "\n=== Generare finala cu scriere in output/ ===\n";
+    std::cout << "\n=== Generare finala cu scriere in output, 1 thread/ ===\n";
     RunStats finalStats = runScenario(config, 1, true, "output/");
+
+    std::cout << "Publicatii generate   : " << finalStats.publications << "\n";
+    std::cout << "Subscriptii generate  : " << finalStats.subscriptions << "\n";
+    std::cout << "Timp generare         : " << finalStats.generationSec << " sec\n";
+    std::cout << "Timp scriere fisiere  : " << finalStats.writeSec << " sec\n";
+    std::cout << "Timp total            : " << finalStats.totalSec << " sec\n";
+
+
+
+    std::cout << "\n=== Generare finala cu scriere in output, 4 threads/ ===\n";
+     finalStats = runScenario(config, 4, true, "output/");
 
     std::cout << "Publicatii generate   : " << finalStats.publications << "\n";
     std::cout << "Subscriptii generate  : " << finalStats.subscriptions << "\n";
