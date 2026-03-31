@@ -51,8 +51,8 @@ struct Subscription {
 // Configuratie generala
 struct Config {
     // volum date
-    size_t numPublications = 100;
-    size_t numSubscriptions = 1000;
+    size_t numPublications = 3000;
+    size_t numSubscriptions = 3000;
     size_t numThreads = 1;
 
     // frecventa campuri (subscriptii)

@@ -1,41 +1,52 @@
 #include "subscription_generator.h"
 #include "utils.h"
 
+#include <vector>
 #include <algorithm>
-#include <cmath>
-#include <numeric>
-#include <stdexcept>
 #include <thread>
+#include <random>
+#include <iostream>
 
-static OperatorType randomStringOperator(std::mt19937& rng, bool forceEquality = false) {
-    if (forceEquality) {
-        return OperatorType::EQ;
+void printStats(const std::vector<Subscription>& subs) {
+    int total = subs.size();
+    int companyCount = 0;
+    int eqCount = 0;
+    int dateCount=0;
+    int variationCount=0;
+    int dropCount=0;int valueCount=0;
+
+    for (const auto& s : subs) {
+        if(s.fields.size()==0) std::cout<<"o subs e goala";
+        for (const auto& f : s.fields) {
+            if (f.fieldType == FieldType::COMPANY) {
+                companyCount++;
+                if (f.op == OperatorType::EQ)
+                    eqCount++;
+            }
+            else if(f.fieldType== FieldType::DATE)
+            dateCount++;
+            else if(f.fieldType== FieldType::VARIATION)
+            variationCount++;
+             else if(f.fieldType== FieldType::DROP)
+            dropCount++;
+            else if(f.fieldType== FieldType::VALUE)
+            valueCount++;
+            
+        }
     }
 
-    std::vector<OperatorType> ops = {
-        OperatorType::EQ,
-        OperatorType::NEQ
-    };
-
-    int index = randomInt(rng, 0, static_cast<int>(ops.size()) - 1);
-    return ops[index];
+    std::cout << "\n=== STATISTICI ===\n";
+    std::cout << "Company presence: " << (100.0 * companyCount / total) << "%\n";
+     std::cout << "Value presence: " << (100.0 * valueCount / total) << "%\n";
+      std::cout << "Drop presence: " << (100.0 * dropCount / total) << "%\n";
+       std::cout << "Date presence: " << (100.0 * dateCount / total) << "%\n";
+        std::cout << "Variation presence: " << (100.0 * variationCount / total) << "%\n";
+    std::cout << "Company EQ rate: " << (100.0 * eqCount / companyCount) << "%\n";
+   
 }
 
-static OperatorType randomNumericOperator(std::mt19937& rng) {
-    std::vector<OperatorType> ops = {
-        OperatorType::EQ,
-        OperatorType::NEQ,
-        OperatorType::LT,
-        OperatorType::LE,
-        OperatorType::GT,
-        OperatorType::GE
-    };
-
-    int index = randomInt(rng, 0, static_cast<int>(ops.size()) - 1);
-    return ops[index];
-}
-
-struct SubscriptionPlan {
+// ce contine fiecare subscriptie
+struct Plan {
     bool hasCompany = false;
     bool hasValue = false;
     bool hasDrop = false;
@@ -45,214 +56,186 @@ struct SubscriptionPlan {
     OperatorType companyOp = OperatorType::EQ;
 };
 
-static size_t percentToCount(size_t total, double percentage) {
-    return static_cast<size_t>(std::llround((percentage / 100.0) * static_cast<double>(total)));
-}
+static std::vector<Plan> buildPlan(const Config& config) {
+    int N = (int)config.numSubscriptions;
+    std::vector<Plan> plans(N);
+    std::mt19937 rng(std::random_device{}());
 
-static void assignFieldToPlans(std::vector<SubscriptionPlan>& plans,
-                               size_t count,
-                               FieldType field,
-                               std::mt19937& rng) {
-    std::vector<size_t> indices(plans.size());
-    std::iota(indices.begin(), indices.end(), 0);
+    int nCompany   = N * config.companyFreqPct   / 100;
+    int nValue     = N * config.valueFreqPct     / 100;
+    int nDrop      = N * config.dropFreqPct      / 100;
+    int nVariation = N * config.variationFreqPct / 100;
+    int nDate      = N * config.dateFreqPct      / 100;
+
+    std::vector<int> indices(N);
+    for (int i = 0; i < N; i++) indices[i] = i;
+
+    // Distribuim toate câmpurile normal prin shuffle
     std::shuffle(indices.begin(), indices.end(), rng);
+    for (int i = 0; i < nCompany; i++)
+        plans[indices[i]].hasCompany = true;
 
-    count = std::min(count, plans.size());
+    std::shuffle(indices.begin(), indices.end(), rng);
+    for (int i = 0; i < nValue; i++)
+        plans[indices[i]].hasValue = true;
 
-    for (size_t i = 0; i < count; i++) {
-        size_t idx = indices[i];
+    std::shuffle(indices.begin(), indices.end(), rng);
+    for (int i = 0; i < nDrop; i++)
+        plans[indices[i]].hasDrop = true;
 
-        switch (field) {
-            case FieldType::COMPANY:
-                plans[idx].hasCompany = true;
-                break;
-            case FieldType::VALUE:
-                plans[idx].hasValue = true;
-                break;
-            case FieldType::DROP:
-                plans[idx].hasDrop = true;
-                break;
-            case FieldType::VARIATION:
-                plans[idx].hasVariation = true;
-                break;
-            case FieldType::DATE:
-                plans[idx].hasDate = true;
-                break;
+    std::shuffle(indices.begin(), indices.end(), rng);
+    for (int i = 0; i < nVariation; i++)
+        plans[indices[i]].hasVariation = true;
+
+    std::shuffle(indices.begin(), indices.end(), rng);
+    for (int i = 0; i < nDate; i++)
+        plans[indices[i]].hasDate = true;
+
+     // reparam subs goale - luam indicii cu company care au SI alte campuri (pot ceda company)
+    std::vector<int> potCedaCompany;
+    for (int i = 0; i < N; i++) {
+        if (plans[i].hasCompany &&
+            (plans[i].hasValue || plans[i].hasDrop ||
+             plans[i].hasVariation || plans[i].hasDate)) {
+            potCedaCompany.push_back(i);
         }
     }
+
+    int cedatDinCompany = 0;
+
+    for (int i = 0; i < N; i++) {
+        if (!plans[i].hasCompany && !plans[i].hasValue && !plans[i].hasDrop
+            && !plans[i].hasVariation && !plans[i].hasDate) {
+
+            // orice subscriptie goala- primeste un company de la cineva
+            plans[i].hasCompany = true;
+
+            // Luam company de la cineva care il are
+            // astfel totalul de company este nCompany cerut
+            if (cedatDinCompany < (int)potCedaCompany.size()) {
+                plans[potCedaCompany[cedatDinCompany]].hasCompany = false;
+                cedatDinCompany++;
+            } 
+        }
+    }
+
+    // setam op eq/ neq pt company
+    std::vector<int> cuCompany;
+    for (int i = 0; i < N; i++) {
+        if (plans[i].hasCompany)
+            cuCompany.push_back(i);
+    }
+
+    std::shuffle(cuCompany.begin(), cuCompany.end(), rng);
+
+    int nEq = (int)(cuCompany.size() * config.companyEqMinPct / 100);
+    for (int i = 0; i < (int)cuCompany.size(); i++) {
+        plans[cuCompany[i]].companyOp =
+            (i < nEq) ? OperatorType::EQ : OperatorType::NEQ;
+    }
+
+    return plans;
 }
 
-static void ensureNoEmptySubscriptions(std::vector<SubscriptionPlan>& plans, std::mt19937& rng) {
-    for (auto& plan : plans) {
-        bool isEmpty = !plan.hasCompany &&
-                       !plan.hasValue &&
-                       !plan.hasDrop &&
-                       !plan.hasVariation &&
-                       !plan.hasDate;
-
-        if (isEmpty) {
-            // alegem un camp random de fallback
-            int choice = randomInt(rng, 0, 4);
-            switch (choice) {
-                case 0: plan.hasCompany = true; break;
-                case 1: plan.hasValue = true; break;
-                case 2: plan.hasDrop = true; break;
-                case 3: plan.hasVariation = true; break;
-                case 4: plan.hasDate = true; break;
-            }
-        }
-    }
-}
-
-static void assignCompanyOperators(std::vector<SubscriptionPlan>& plans,
-                                   const Config& config,
-                                   std::mt19937& rng) {
-    std::vector<size_t> companyIndices;
-
-    for (size_t i = 0; i < plans.size(); i++) {
-        if (plans[i].hasCompany) {
-            companyIndices.push_back(i);
-        }
-    }
-
-    if (companyIndices.empty()) {
-        return;
-    }
-
-    std::shuffle(companyIndices.begin(), companyIndices.end(), rng);
-
-    size_t minEqCount = percentToCount(companyIndices.size(), config.companyEqMinPct);
-    minEqCount = std::min(minEqCount, companyIndices.size());
-
-    for (size_t i = 0; i < companyIndices.size(); i++) {
-        size_t idx = companyIndices[i];
-
-        if (i < minEqCount) {
-            plans[idx].companyOp = OperatorType::EQ;
-        } else {
-            plans[idx].companyOp = OperatorType::NEQ;
-        }
-    }
-}
-
-static Subscription buildSubscriptionFromPlan(const SubscriptionPlan& plan,
-                                              const Config& config,
-                                              std::mt19937& rng) {
+// Construim o subscriptie din plan
+static Subscription buildSubscription(const Plan& plan, const Config& config, std::mt19937& rng) {
     Subscription sub;
 
     if (plan.hasCompany) {
-        SubscriptionField field;
-        field.fieldType = FieldType::COMPANY;
-        field.op = plan.companyOp;
-        field.stringValue = randomChoice(rng, config.companies);
-        sub.fields.push_back(field);
+        SubscriptionField f;
+        f.fieldType = FieldType::COMPANY;
+        f.op = plan.companyOp;
+        f.stringValue = config.companies[rng() % config.companies.size()];
+        sub.fields.push_back(f);
     }
 
     if (plan.hasValue) {
-        SubscriptionField field;
-        field.fieldType = FieldType::VALUE;
-        field.op = randomNumericOperator(rng);
-        field.numericValue = randomDouble(rng, config.subValueMin, config.subValueMax);
-        sub.fields.push_back(field);
+        SubscriptionField f;
+        f.fieldType = FieldType::VALUE;
+        f.op = OperatorType::GE;
+        f.numericValue = config.subValueMin +
+            (double)(rng() % 1000) / 1000 * (config.subValueMax - config.subValueMin);
+        sub.fields.push_back(f);
     }
 
     if (plan.hasDrop) {
-        SubscriptionField field;
-        field.fieldType = FieldType::DROP;
-        field.op = randomNumericOperator(rng);
-        field.numericValue = randomDouble(rng, config.subDropMin, config.subDropMax);
-        sub.fields.push_back(field);
+        SubscriptionField f;
+        f.fieldType = FieldType::DROP;
+        f.op = OperatorType::LE;
+        f.numericValue = config.subDropMin +
+            (double)(rng() % 1000) / 1000 * (config.subDropMax - config.subDropMin);
+        sub.fields.push_back(f);
     }
 
     if (plan.hasVariation) {
-        SubscriptionField field;
-        field.fieldType = FieldType::VARIATION;
-        field.op = randomNumericOperator(rng);
-        field.numericValue = randomDouble(rng, config.subVariationMin, config.subVariationMax);
-        sub.fields.push_back(field);
+        SubscriptionField f;
+        f.fieldType = FieldType::VARIATION;
+        f.op = OperatorType::LT;
+        f.numericValue = config.subVariationMin +
+            (double)(rng() % 1000) / 1000 * (config.subVariationMax - config.subVariationMin);
+        sub.fields.push_back(f);
     }
 
     if (plan.hasDate) {
-        SubscriptionField field;
-        field.fieldType = FieldType::DATE;
-        field.op = randomStringOperator(rng);
-        field.stringValue = randomChoice(rng, config.dates);
-        sub.fields.push_back(field);
+        SubscriptionField f;
+        f.fieldType = FieldType::DATE;
+        f.op = OperatorType::EQ;
+        f.stringValue = config.dates[rng() % config.dates.size()];
+        sub.fields.push_back(f);
     }
 
     return sub;
 }
 
-static std::vector<SubscriptionPlan> buildBalancedPlans(const Config& config, std::mt19937& rng) {
-    std::vector<SubscriptionPlan> plans(config.numSubscriptions);
-
-    size_t companyCount = percentToCount(config.numSubscriptions, config.companyFreqPct);
-    size_t valueCount = percentToCount(config.numSubscriptions, config.valueFreqPct);
-    size_t dropCount = percentToCount(config.numSubscriptions, config.dropFreqPct);
-    size_t variationCount = percentToCount(config.numSubscriptions, config.variationFreqPct);
-    size_t dateCount = percentToCount(config.numSubscriptions, config.dateFreqPct);
-
-    assignFieldToPlans(plans, companyCount, FieldType::COMPANY, rng);
-    assignFieldToPlans(plans, valueCount, FieldType::VALUE, rng);
-    assignFieldToPlans(plans, dropCount, FieldType::DROP, rng);
-    assignFieldToPlans(plans, variationCount, FieldType::VARIATION, rng);
-    assignFieldToPlans(plans, dateCount, FieldType::DATE, rng);
-
-    ensureNoEmptySubscriptions(plans, rng);
-    assignCompanyOperators(plans, config, rng);
-
-    return plans;
-}
-
+// Varianta secventiala, folosita pt un sg thread
 std::vector<Subscription> generateSubscriptionsBalanced(const Config& config) {
-    std::vector<Subscription> subscriptions;
-    subscriptions.reserve(config.numSubscriptions);
+    int N = (int)config.numSubscriptions;
+
+    std::vector<Plan> plans = buildPlan(config);
+    std::vector<Subscription> subs;
+    subs.reserve(N);
 
     std::mt19937 rng(std::random_device{}());
-    std::vector<SubscriptionPlan> plans = buildBalancedPlans(config, rng);
 
-    for (const auto& plan : plans) {
-        subscriptions.push_back(buildSubscriptionFromPlan(plan, config, rng));
+    for (int i = 0; i < N; i++) {
+        subs.push_back(buildSubscription(plans[i], config, rng));
     }
-
-    return subscriptions;
+    printStats(subs);
+    return subs;
 }
 
+// Varianta paralela
 std::vector<Subscription> generateSubscriptionsBalancedParallel(const Config& config, size_t numThreads) {
-    if (numThreads <= 1 || config.numSubscriptions == 0) {
+    int N = (int)config.numSubscriptions;
+
+    if (numThreads <= 1 || N == 0) {
         return generateSubscriptionsBalanced(config);
     }
 
-    std::mt19937 planRng(std::random_device{}());
-    std::vector<SubscriptionPlan> plans = buildBalancedPlans(config, planRng);
+    std::vector<Plan> plans = buildPlan(config);
+    std::vector<Subscription> subs(N);
 
-    std::vector<Subscription> subscriptions(config.numSubscriptions);
+    int chunk = N / (int)numThreads;
+    std::vector<std::thread> threads;
 
-    size_t workerCount = std::min(numThreads, config.numSubscriptions);
-    size_t baseChunk = config.numSubscriptions / workerCount;
-    size_t remainder = config.numSubscriptions % workerCount;
+    for (int t = 0; t < (int)numThreads; t++) {
+        int start = t * chunk;
+        int end = (t == (int)numThreads - 1) ? N : start + chunk;
 
-    std::vector<std::thread> workers;
-    workers.reserve(workerCount);
+        threads.emplace_back([&, start, end]() {
+            std::mt19937 rng(std::random_device{}());
 
-    size_t start = 0;
-    for (size_t worker = 0; worker < workerCount; worker++) {
-        size_t chunk = baseChunk + (worker < remainder ? 1 : 0);
-        size_t end = start + chunk;
-
-        workers.emplace_back([&, start, end, worker]() {
-            std::mt19937 rng(std::random_device{}() + 1000u + static_cast<unsigned int>(worker));
-            for (size_t i = start; i < end; i++) {
-                subscriptions[i] = buildSubscriptionFromPlan(plans[i], config, rng);
+            for (int i = start; i < end; i++) {
+                subs[i] = buildSubscription(plans[i], config, rng);
             }
         });
-
-        start = end;
     }
 
-    for (auto& worker : workers) {
-        worker.join();
+    for (auto& th : threads) {
+        th.join();
     }
-
-    return subscriptions;
+    printStats(subs);
+    return subs;
 }
+
+

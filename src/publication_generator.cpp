@@ -1,69 +1,73 @@
 #include "publication_generator.h"
 #include "utils.h"
 
-#include <algorithm>
-#include <thread>
 #include <vector>
+#include <thread>
+#include <random>
 
-Publication generatePublication(const Config& config, std::mt19937& rng) {
-    Publication pub;
-
-    // stringuri din seturi prestabilite
-    pub.company = randomChoice(rng, config.companies);
-    pub.date = randomChoice(rng, config.dates);
-
-    // valori numerice din intervale configurate
-    pub.value = randomDouble(rng, config.pubValueMin, config.pubValueMax);
-    pub.drop = randomDouble(rng, config.pubDropMin, config.pubDropMax);
-    pub.variation = randomDouble(rng, config.pubVariationMin, config.pubVariationMax);
-
-    return pub;
-}
-
+// Varianta secventiala
 std::vector<Publication> generatePublicationsSequential(const Config& config) {
-    std::vector<Publication> publications;
-    publications.reserve(config.numPublications);
+    int N = (int)config.numPublications;
+
+    std::vector<Publication> pubs;
+    pubs.reserve(N);
 
     std::mt19937 rng(std::random_device{}());
-    for (size_t i = 0; i < config.numPublications; i++) {
-        publications.push_back(generatePublication(config, rng));
+
+    for (int i = 0; i < N; i++) {
+        Publication p;
+
+        p.company = randomChoice(rng, config.companies);
+        p.date = randomChoice(rng, config.dates);
+
+        p.value = randomDouble(rng, config.pubValueMin, config.pubValueMax);
+        p.drop = randomDouble(rng, config.pubDropMin, config.pubDropMax);
+        p.variation = randomDouble(rng, config.pubVariationMin, config.pubVariationMax);
+
+        pubs.push_back(p);
     }
 
-    return publications;
+    return pubs;
 }
 
+// Varianta paralela
 std::vector<Publication> generatePublicationsParallel(const Config& config, size_t numThreads) {
-    if (numThreads <= 1 || config.numPublications == 0) {
+    int N = (int)config.numPublications;
+
+    if (numThreads <= 1 || N == 0) {
         return generatePublicationsSequential(config);
     }
 
-    std::vector<Publication> publications(config.numPublications);
+    std::vector<Publication> pubs(N);
 
-    size_t workerCount = std::min(numThreads, config.numPublications);
-    size_t baseChunk = config.numPublications / workerCount;
-    size_t remainder = config.numPublications % workerCount;
+    int chunk = N / (int)numThreads;
+    std::vector<std::thread> threads;
 
-    std::vector<std::thread> workers;
-    workers.reserve(workerCount);
+    for (int t = 0; t < (int)numThreads; t++) {
+        int start = t * chunk;
+        int end = (t == (int)numThreads - 1) ? N : start + chunk;
 
-    size_t start = 0;
-    for (size_t worker = 0; worker < workerCount; worker++) {
-        size_t chunk = baseChunk + (worker < remainder ? 1 : 0);
-        size_t end = start + chunk;
+        threads.emplace_back([&, start, end]() {
+            std::mt19937 rng(std::random_device{}());
 
-        workers.emplace_back([&, start, end, worker]() {
-            std::mt19937 rng(std::random_device{}() + static_cast<unsigned int>(worker));
-            for (size_t i = start; i < end; i++) {
-                publications[i] = generatePublication(config, rng);
+            for (int i = start; i < end; i++) {
+                Publication p;
+
+                p.company = randomChoice(rng, config.companies);
+                p.date = randomChoice(rng, config.dates);
+
+                p.value = randomDouble(rng, config.pubValueMin, config.pubValueMax);
+                p.drop = randomDouble(rng, config.pubDropMin, config.pubDropMax);
+                p.variation = randomDouble(rng, config.pubVariationMin, config.pubVariationMax);
+
+                pubs[i] = p;
             }
         });
-
-        start = end;
     }
 
-    for (auto& worker : workers) {
-        worker.join();
+    for (auto& th : threads) {
+        th.join();
     }
 
-    return publications;
+    return pubs;
 }

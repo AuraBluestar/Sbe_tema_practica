@@ -59,6 +59,8 @@ static RunStats runScenario(const Config& baseConfig,
     std::chrono::duration<double> writeTime = end - afterGeneration;
     std::chrono::duration<double> totalTime = end - start;
 
+    
+    std::cout << "Rulat pe   : " << numThreads << " threaduri\n";
     RunStats stats;
     stats.publications = publications.size();
     stats.subscriptions = subscriptions.size();
@@ -71,8 +73,8 @@ static RunStats runScenario(const Config& baseConfig,
 int main() {
     Config config;
 
-   // config.numPublications = 200000;
-    //config.numSubscriptions = 200000;
+    config.numPublications = 200000;
+    config.numSubscriptions = 200000;
 
     std::cout << "=== Benchmark (fara scriere in fisier) ===\n";
     for (size_t threads : {1u, 4u}) {
@@ -87,7 +89,7 @@ int main() {
    
 
     std::cout << "\n=== Generare finala cu scriere in output/ ===\n";
-    RunStats finalStats = runScenario(config, 3, true, "output/");
+    RunStats finalStats = runScenario(config, 1, true, "output/");
 
     std::cout << "Publicatii generate   : " << finalStats.publications << "\n";
     std::cout << "Subscriptii generate  : " << finalStats.subscriptions << "\n";
