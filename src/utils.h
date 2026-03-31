@@ -7,6 +7,8 @@
 
 double randomDouble(std::mt19937& rng, double minValue, double maxValue);
 int randomInt(std::mt19937& rng, int minValue, int maxValue);
+OperatorType randomNumericOperator(std::mt19937& rng);
+OperatorType randomStringOperator(std::mt19937& rng);
 
 std::string randomChoice(std::mt19937& rng, const std::vector<std::string>& values);
 

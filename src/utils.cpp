@@ -4,6 +4,30 @@
 #include <sstream>
 #include <stdexcept>
 
+
+OperatorType randomStringOperator(std::mt19937& rng) {
+    std::vector<OperatorType> ops = {
+        OperatorType::EQ,
+        OperatorType::NEQ
+    };
+
+    return ops[rng() % ops.size()];
+}
+
+OperatorType randomNumericOperator(std::mt19937& rng) {
+    std::vector<OperatorType> ops = {
+        OperatorType::EQ,
+        OperatorType::NEQ,
+        OperatorType::LT,
+        OperatorType::LE,
+        OperatorType::GT,
+        OperatorType::GE
+    };
+
+    return ops[rng() % ops.size()];
+}
+
+
 double randomDouble(std::mt19937& rng, double minValue, double maxValue) {
     std::uniform_real_distribution<double> dist(minValue, maxValue);
     return dist(rng);

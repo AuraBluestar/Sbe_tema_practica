@@ -7,28 +7,6 @@
 #include <random>
 #include <iostream>
 
-static OperatorType randomStringOperator(std::mt19937& rng) {
-    std::vector<OperatorType> ops = {
-        OperatorType::EQ,
-        OperatorType::NEQ
-    };
-
-    return ops[rng() % ops.size()];
-}
-
-static OperatorType randomNumericOperator(std::mt19937& rng) {
-    std::vector<OperatorType> ops = {
-        OperatorType::EQ,
-        OperatorType::NEQ,
-        OperatorType::LT,
-        OperatorType::LE,
-        OperatorType::GT,
-        OperatorType::GE
-    };
-
-    return ops[rng() % ops.size()];
-}
-
 
 void printStats(const std::vector<Subscription>& subs) {
     int total = subs.size();
@@ -93,7 +71,7 @@ static std::vector<Plan> buildPlan(const Config& config) {
     std::vector<int> indices(N);
     for (int i = 0; i < N; i++) indices[i] = i;
 
-    // Distribuim toate câmpurile normal prin shuffle
+    // Distribuim toate campurile normal prin shuffle
     std::shuffle(indices.begin(), indices.end(), rng);
     for (int i = 0; i < nCompany; i++)
         plans[indices[i]].hasCompany = true;
