@@ -92,33 +92,43 @@ static std::vector<Plan> buildPlan(const Config& config) {
     for (int i = 0; i < nDate; i++)
         plans[indices[i]].hasDate = true;
 
-     // reparam subs goale - luam indicii cu company care au SI alte campuri (pot ceda company)
-    std::vector<int> potCedaCompany;
+    std::vector<int> goi, pline;
     for (int i = 0; i < N; i++) {
-        if (plans[i].hasCompany &&
-            (plans[i].hasValue || plans[i].hasDrop ||
-             plans[i].hasVariation || plans[i].hasDate)) {
-            potCedaCompany.push_back(i);
-        }
+        int cnt = plans[i].hasCompany + plans[i].hasValue + plans[i].hasDrop
+                + plans[i].hasVariation + plans[i].hasDate;
+        if (cnt == 0) goi.push_back(i);
+        if (cnt >= 2) pline.push_back(i);
     }
 
-    int cedatDinCompany = 0;
+    std::shuffle(pline.begin(), pline.end(), rng);
+    int donorIdx = 0;
 
-    for (int i = 0; i < N; i++) {
-        if (!plans[i].hasCompany && !plans[i].hasValue && !plans[i].hasDrop
-            && !plans[i].hasVariation && !plans[i].hasDate) {
-
-            // orice subscriptie goala- primeste un company de la cineva
-            plans[i].hasCompany = true;
-
-            // Luam company de la cineva care il are
-            // astfel totalul de company este nCompany cerut
-            if (cedatDinCompany < (int)potCedaCompany.size()) {
-                plans[potCedaCompany[cedatDinCompany]].hasCompany = false;
-                cedatDinCompany++;
-            } 
+    for (int gol : goi) {
+        // Cautam donator cu mai mult de 2 campuri
+        while (donorIdx < (int)pline.size()) {
+            int d = pline[donorIdx];
+            // recalculeaza cnt donor (poate a mai donat)
+            int cnt = plans[d].hasCompany + plans[d].hasValue + plans[d].hasDrop
+                    + plans[d].hasVariation + plans[d].hasDate;
+            if (cnt >= 2) break;
+            donorIdx++;
         }
+
+        int d = pline[donorIdx];
+
+        // Muta un camp de la donor la gol 
+        if (plans[d].hasCompany)        { plans[gol].hasCompany   = true; plans[d].hasCompany   = false; }
+        else if (plans[d].hasValue)     { plans[gol].hasValue     = true; plans[d].hasValue     = false; }
+        else if (plans[d].hasDrop)      { plans[gol].hasDrop      = true; plans[d].hasDrop      = false; }
+        else if (plans[d].hasVariation) { plans[gol].hasVariation = true; plans[d].hasVariation = false; }
+        else if (plans[d].hasDate)      { plans[gol].hasDate      = true; plans[d].hasDate      = false; }
+
+        // daca donatorul a ramas cu 1 camp, nu mai poate dona
+        int cntRamas = plans[d].hasCompany + plans[d].hasValue + plans[d].hasDrop
+                     + plans[d].hasVariation + plans[d].hasDate;
+        if (cntRamas < 2) donorIdx++;
     }
+
 
     // setam op eq/ neq pt company
     std::vector<int> cuCompany;
@@ -134,6 +144,9 @@ static std::vector<Plan> buildPlan(const Config& config) {
         plans[cuCompany[i]].companyOp =
             (i < nEq) ? OperatorType::EQ : OperatorType::NEQ;
     }
+
+
+
 
     return plans;
 }
