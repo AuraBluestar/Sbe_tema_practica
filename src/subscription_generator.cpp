@@ -7,6 +7,29 @@
 #include <random>
 #include <iostream>
 
+static OperatorType randomStringOperator(std::mt19937& rng) {
+    std::vector<OperatorType> ops = {
+        OperatorType::EQ,
+        OperatorType::NEQ
+    };
+
+    return ops[rng() % ops.size()];
+}
+
+static OperatorType randomNumericOperator(std::mt19937& rng) {
+    std::vector<OperatorType> ops = {
+        OperatorType::EQ,
+        OperatorType::NEQ,
+        OperatorType::LT,
+        OperatorType::LE,
+        OperatorType::GT,
+        OperatorType::GE
+    };
+
+    return ops[rng() % ops.size()];
+}
+
+
 void printStats(const std::vector<Subscription>& subs) {
     int total = subs.size();
     int companyCount = 0;
@@ -137,7 +160,6 @@ static std::vector<Plan> buildPlan(const Config& config) {
     return plans;
 }
 
-// Construim o subscriptie din plan
 static Subscription buildSubscription(const Plan& plan, const Config& config, std::mt19937& rng) {
     Subscription sub;
 
@@ -145,42 +167,39 @@ static Subscription buildSubscription(const Plan& plan, const Config& config, st
         SubscriptionField f;
         f.fieldType = FieldType::COMPANY;
         f.op = plan.companyOp;
-        f.stringValue = config.companies[rng() % config.companies.size()];
+        f.stringValue = randomChoice(rng, config.companies);
         sub.fields.push_back(f);
     }
 
     if (plan.hasValue) {
         SubscriptionField f;
         f.fieldType = FieldType::VALUE;
-        f.op = OperatorType::GE;
-        f.numericValue = config.subValueMin +
-            (double)(rng() % 1000) / 1000 * (config.subValueMax - config.subValueMin);
+        f.op = randomNumericOperator(rng);
+        f.numericValue = randomDouble(rng, config.subValueMin, config.subValueMax);
         sub.fields.push_back(f);
     }
 
     if (plan.hasDrop) {
         SubscriptionField f;
         f.fieldType = FieldType::DROP;
-        f.op = OperatorType::LE;
-        f.numericValue = config.subDropMin +
-            (double)(rng() % 1000) / 1000 * (config.subDropMax - config.subDropMin);
+        f.op = randomNumericOperator(rng);
+        f.numericValue = randomDouble(rng, config.subDropMin, config.subDropMax);
         sub.fields.push_back(f);
     }
 
     if (plan.hasVariation) {
         SubscriptionField f;
         f.fieldType = FieldType::VARIATION;
-        f.op = OperatorType::LT;
-        f.numericValue = config.subVariationMin +
-            (double)(rng() % 1000) / 1000 * (config.subVariationMax - config.subVariationMin);
+        f.op = randomNumericOperator(rng);
+        f.numericValue = randomDouble(rng, config.subVariationMin, config.subVariationMax);
         sub.fields.push_back(f);
     }
 
     if (plan.hasDate) {
         SubscriptionField f;
         f.fieldType = FieldType::DATE;
-        f.op = OperatorType::EQ;
-        f.stringValue = config.dates[rng() % config.dates.size()];
+        f.op = randomStringOperator(rng);
+        f.stringValue = randomChoice(rng, config.dates);
         sub.fields.push_back(f);
     }
 
