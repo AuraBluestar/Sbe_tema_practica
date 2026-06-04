@@ -1,38 +1,87 @@
 #include <iostream>
-#include <thread>
 #include <vector>
+#include <thread>
 #include <mutex>
+#include <unordered_map>
 #include <unistd.h>
 #include <arpa/inet.h>
 
-#include "message.h"
-#include "serialization.h"
+#include "common/message.h"
+#include "common/serialization.h"
+#include "common/matcher.h"
+#include "../src/utils.h"
+#include "../src/models.h"
 
-std::vector<int> subscribers;
 std::mutex mtx;
 
-void handleClient(int clientSock) {
-    char buffer[1024];
 
-    while (true) {
-        int bytes = recv(clientSock, buffer, sizeof(buffer) - 1, 0);
-        if (bytes <= 0) break;
+struct SubscriberInfo
+{
+    int socket;
+    Subscription subscription;
+};
 
-        buffer[bytes] = '\0';
+std::vector<SubscriberInfo> subscribers;
+void handleClient(int clientSock)
+{
+    char temp[4096];
+    std::string buffer;
 
-        NetworkMessage msg = deserialize(buffer);
+    while (true)
+    {
+        int bytes = recv(clientSock, temp, sizeof(temp), 0);
 
-        if (msg.type == MessageType::SUBSCRIPTION) {
+        if (bytes <= 0)
+            break;
+
+        buffer.append(temp, bytes);
+
+        size_t pos;
+        while ((pos = buffer.find('\n')) != std::string::npos)
+        {
+            std::string msgStr = buffer.substr(0, pos);
+            buffer.erase(0, pos + 1);
+
+            NetworkMessage msg = deserialize(msgStr);
+
             std::lock_guard<std::mutex> lock(mtx);
-            subscribers.push_back(clientSock);
-            std::cout << "New subscriber\n";
-        }
 
-        if (msg.type == MessageType::PUBLICATION) {
-            std::lock_guard<std::mutex> lock(mtx);
+            // =====================
+            // SUBSCRIPTION
+            // =====================
+            if (msg.type == MessageType::SUBSCRIPTION)
+            {
+                Subscription sub = deserializeSubscription(msg.payload);
+                std::cout<<"Subscription received "<< sub.fields.size() << " fields\n";
+                for(int i=0; i<sub.fields.size(); i++)
+                {
+                    std::cout<<"Field "<<i<<": type="<<fieldTypeToString(sub.fields[i].fieldType)
+                             <<", op="<<operatorToString(sub.fields[i].op)
+                             <<", strVal="<<sub.fields[i].stringValue
+                             <<", numVal="<<sub.fields[i].numericValue<<"\n";
+                }
+                subscribers.push_back({clientSock, sub});
+            }
 
-            for (int subSock : subscribers) {
-                send(subSock, buffer, bytes, 0);
+            // =====================
+            // PUBLICATION
+            // =====================
+            else if (msg.type == MessageType::PUBLICATION)
+            {
+               Publication pub=deserializePublication(msg.payload);
+                std::cout<<"Publication received: "<<pub.company<<" "<<pub.value<<" "<<pub.date<<" "<<pub.drop<< " "<<pub.variation<<"\n";
+    
+                 for (const auto& subInfo : subscribers)
+                 {
+                      if (matches(pub, subInfo.subscription))
+                      {
+                            NetworkMessage notif;
+                            notif.type = MessageType::NOTIFICATION;
+                            notif.payload = serializePublication(pub) + "\n";
+    
+                            send(subInfo.socket, serialize(notif).c_str(), serialize(notif).size(), 0);
+                      }
+                 }
             }
         }
     }
@@ -40,7 +89,8 @@ void handleClient(int clientSock) {
     close(clientSock);
 }
 
-int main() {
+int main()
+{
     int serverSock = socket(AF_INET, SOCK_STREAM, 0);
 
     sockaddr_in addr{};
@@ -51,9 +101,10 @@ int main() {
     bind(serverSock, (sockaddr*)&addr, sizeof(addr));
     listen(serverSock, 10);
 
-    std::cout << "Broker started...\n";
+    std::cout << "[BROKER] Started on port 5000\n";
 
-    while (true) {
+    while (true)
+    {
         int clientSock = accept(serverSock, nullptr, nullptr);
 
         std::thread(handleClient, clientSock).detach();

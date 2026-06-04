@@ -1,15 +1,16 @@
 #pragma once
 #include <string>
 
-enum class MessageType {
+enum class MessageType
+{
     PUBLICATION,
     SUBSCRIPTION,
-    BROKER_FORWARD
+    BROKER_FORWARD,
+    NOTIFICATION
 };
 
-struct NetworkMessage {
+struct NetworkMessage
+{
     MessageType type;
-
-    // pentru simplitate folosim string
     std::string payload;
 };

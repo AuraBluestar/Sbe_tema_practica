@@ -1,11 +1,16 @@
 #include <iostream>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <thread>
+#include <chrono>
 
-#include "message.h"
-#include "serialization.h"
+#include "common/message.h"
+#include "common/serialization.h"
+#include "../src/publication_generator.h"
+#include "../src/models.h"   // Publication din tema1
 
-int main() {
+int main()
+{
     int sock = socket(AF_INET, SOCK_STREAM, 0);
 
     sockaddr_in addr{};
@@ -15,15 +20,25 @@ int main() {
 
     connect(sock, (sockaddr*)&addr, sizeof(addr));
 
-    while (true) {
-        NetworkMessage msg;
-        msg.type = MessageType::PUBLICATION;
-        msg.payload = "temp=25;city=iasi";
+    Config cfg;
+    cfg.numPublications = 10; // momentan se trimit doar 10 pub generate
 
-        std::string data = serialize(msg);
+    auto pubs = generatePublicationsSequential(cfg);
+    for(int i=0; i<cfg.numPublications; i++)
+{
+    Publication p=pubs[i];
+    
 
-        send(sock, data.c_str(), data.size(), 0);
+    NetworkMessage msg;
+    msg.type = MessageType::PUBLICATION;
+    msg.payload = serializePublication(p);
 
-        sleep(1);
-    }
+    std::string data = serialize(msg);
+    data += "\n";
+
+    send(sock, data.c_str(), data.size(), 0);
+
+    std::cout << "[PUBLISHER] sent\n";
+    sleep(1);
+}
 }
