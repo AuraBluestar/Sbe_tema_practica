@@ -4,6 +4,8 @@
 #include <mutex>
 #include <atomic>
 #include <chrono>
+#include <unordered_set>
+#include <random>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -15,12 +17,14 @@
 #include "../src/models.h"
 
 // ============================================================
-//  Lansare: ./subscriber <subscriber_id> <num_subscriptions>
+//  Lansare: ./subscriber <subscriber_id> <num_subscriptions> <num_brokers> [company_eq_pct]
 //  subscriber_id: 1, 2 sau 3
-//  Subscriptiile sunt distribuite ROUND-ROBIN pe toti cei 3 brokeri
+//  Subscriptiile sunt trimise catre brokeri de intrare alesi aleatoriu.
 // ============================================================
 
 std::mutex printMtx;
+std::mutex dedupMtx;
+std::unordered_set<long long> receivedPublications;
 std::atomic<long long> notificationsReceived{0};
 std::atomic<long long> totalLatencyUs{0};
 
@@ -82,6 +86,14 @@ void receiveNotifications(int sock, int subscriberId, int brokerIdx) {
                 }
 
                 Publication p = deserializePublication(pubPayload);
+                {
+                    std::lock_guard<std::mutex> lock(dedupMtx);
+                    if (receivedPublications.count(p.id)) {
+                        continue;
+                    }
+                    receivedPublications.insert(p.id);
+                }
+
                 long long latency = (emitTime > 0) ? (recvTime - emitTime) : 0;
 
                 notificationsReceived++;
@@ -89,7 +101,7 @@ void receiveNotifications(int sock, int subscriberId, int brokerIdx) {
 
                 std::lock_guard<std::mutex> lock(printMtx);
                 std::cout << "[SUB " << subscriberId << " via B" << brokerIdx+1 << "] "
-                          << "NOTIF: " << p.company << " val=" << p.value
+                          << "NOTIF: id=" << p.id << " " << p.company << " val=" << p.value
                           << " latenta=" << latency << "us\n";
             }
         }
@@ -100,12 +112,22 @@ void receiveNotifications(int sock, int subscriberId, int brokerIdx) {
 //  Main
 // ============================================================
 int main(int argc, char* argv[]) {
+    if (argc < 4) {
+        std::cerr << "Usage: ./subscriber <subscriber_id> <num_subscriptions> <num_brokers> [company_eq_pct]\n";
+        return 1;
+    }
+
     int subscriberId = std::stoi(argv[1]);
-int numSubs = std::stoi(argv[2]);
-int numBrokers = std::stoi(argv[3]);
+    int numSubs = std::stoi(argv[2]);
+    int numBrokers = std::stoi(argv[3]);
+    double companyEqPct = 70.0;
+    if (argc >= 5) {
+        companyEqPct = std::stod(argv[4]);
+    }
 
     std::cout << "[SUB " << subscriberId << "] Pornit, trimit " << numSubs 
-              << " subscriptii distribuite pe " << numBrokers<< " brokeri\n";
+              << " subscriptii distribuite pe " << numBrokers
+              << " brokeri, company EQ=" << companyEqPct << "%\n";
 
     
     std::vector<int> sockets;
@@ -124,28 +146,24 @@ int numBrokers = std::stoi(argv[3]);
     // --------------------------------------------------------
     Config cfg;
     cfg.numSubscriptions = numSubs;
+    cfg.companyEqMinPct = companyEqPct;
     auto subs = generateSubscriptionsBalanced(cfg);
 
-    // --------------------------------------------------------
-    // Distribuire ROUND-ROBIN pe brokeri
-    // Subscriptiile 0,3,6,... -> broker 0
-    // Subscriptiile 1,4,7,... -> broker 1
-    // Subscriptiile 2,5,8,... -> broker 2
-    // --------------------------------------------------------
-    for (int i = 0; i < (int)subs.size(); i++) {
-        int brokerIdx = i % numBrokers;
-        int sock = sockets[brokerIdx];
+    std::mt19937 rng(std::random_device{}());
+    std::uniform_int_distribution<int> brokerDist(0, numBrokers - 1);
 
-        // Payload: "<subscriberId>|<serialized_sub>"
+    for (int i = 0; i < (int)subs.size(); i++) {
         NetworkMessage msg;
         msg.type = MessageType::SUBSCRIPTION;
         msg.payload = std::to_string(subscriberId) + "|" + serializeSubscription(subs[i]);
 
+        int brokerIdx = brokerDist(rng);
+        int sock = sockets[brokerIdx];
         std::string data = serialize(msg) + "\n";
         send(sock, data.c_str(), data.size(), 0);
 
-        std::cout << "[SUB " << subscriberId << "] Subscriptie " << i 
-                  << " trimisa la broker " << brokerIdx+1 << "\n";
+        std::cout << "[SUB " << subscriberId << "] Subscriptie " << i
+                  << " trimisa la broker de intrare random " << brokerIdx + 1 << "\n";
     }
 
     std::cout << "[SUB " << subscriberId << "] Toate subscriptiile trimise, astept notificari...\n";

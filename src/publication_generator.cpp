@@ -4,6 +4,9 @@
 #include <vector>
 #include <thread>
 #include <random>
+#include <atomic>
+
+static std::atomic<long long> nextPublicationId{1};
 
 // Varianta secventiala
 std::vector<Publication> generatePublicationsSequential(const Config& config) {
@@ -17,6 +20,7 @@ std::vector<Publication> generatePublicationsSequential(const Config& config) {
     for (int i = 0; i < N; i++) {
         Publication p;
 
+        p.id = nextPublicationId.fetch_add(1);
         p.company = randomChoice(rng, config.companies);
         p.date = randomChoice(rng, config.dates);
 
@@ -53,6 +57,7 @@ std::vector<Publication> generatePublicationsParallel(const Config& config, size
             for (int i = start; i < end; i++) {
                 Publication p;
 
+                p.id = nextPublicationId.fetch_add(1);
                 p.company = randomChoice(rng, config.companies);
                 p.date = randomChoice(rng, config.dates);
 

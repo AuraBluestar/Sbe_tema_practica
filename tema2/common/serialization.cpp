@@ -6,7 +6,8 @@
 // ---------------------
 std::string serializePublication(const Publication& p)
 {
-    return p.company + "|" +
+    return std::to_string(p.id) + "|" +
+           p.company + "|" +
            std::to_string(p.value) + "|" +
            std::to_string(p.drop) + "|" +
            std::to_string(p.variation) + "|" +
@@ -19,6 +20,9 @@ Publication deserializePublication(const std::string& data)
     std::stringstream ss(data);
 
     std::string token;
+
+    std::getline(ss, token, '|');
+    p.id = std::stoll(token);
 
     std::getline(ss, p.company, '|');
 

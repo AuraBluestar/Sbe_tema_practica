@@ -7,6 +7,7 @@
 #include <string>
 #include <algorithm>
 #include <chrono>
+#include <sstream>
 
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -22,13 +23,15 @@ std::mutex mtx;
 // ---------------------------
 // subscriptions local
 // ---------------------------
-struct SubscriberInfo {
+struct StoredSubscription {
     int socket;
     int subscriberId;
+    int originBrokerId;
     Subscription subscription;
 };
 
-std::vector<SubscriberInfo> localSubscribers;
+std::vector<StoredSubscription> storedSubscriptions;
+std::unordered_map<int, int> localSubscriberSockets;
 
 // ---------------------------
 // peer broker sockets
@@ -39,6 +42,13 @@ std::unordered_map<int, int> brokerSockets;
 // company ownership (MANY brokers per company)
 // ---------------------------
 std::unordered_map<std::string, std::unordered_set<int>> companyMap;
+
+// ---------------------------
+// deduplication
+// ---------------------------
+std::unordered_set<long long> processedPublications;
+std::unordered_map<int, std::unordered_set<long long>> deliveredToSubscriber;
+std::unordered_map<std::string, int> subscriptionRouteCursor;
 
 // ---------------------------
 int myBrokerId;
@@ -87,26 +97,166 @@ void sendMsg(int sock, const NetworkMessage& msg) {
     send(sock, data.c_str(), data.size(), 0);
 }
 
-// ============================================================
-void matchAndNotify(const Publication& pub) {
+int brokerIdFromPort(int port) {
+    return port - 5000;
+}
 
-    std::lock_guard<std::mutex> lock(mtx);
-
-    for (auto& sub : localSubscribers) {
-        if (matches(pub, sub.subscription)) {
-
-            NetworkMessage n;
-            n.type = MessageType::NOTIFICATION;
-
-            auto now = std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::system_clock::now().time_since_epoch()
-            ).count();
-
-            n.payload = serializePublication(pub) + "|" + std::to_string(now);
-
-            sendMsg(sub.socket, n);
+const SubscriptionField* findCompanyField(const Subscription& sub) {
+    for (const auto& field : sub.fields) {
+        if (field.fieldType == FieldType::COMPANY) {
+            return &field;
         }
     }
+
+    return nullptr;
+}
+
+std::vector<int> getCompanyOwners(const std::string& company) {
+    std::vector<int> owners;
+    auto it = companyMap.find(company);
+
+    if (it == companyMap.end()) {
+        return owners;
+    }
+
+    for (int owner : it->second) {
+        owners.push_back(owner);
+    }
+
+    std::sort(owners.begin(), owners.end());
+    return owners;
+}
+
+void storeSubscriptionLocked(int socket, int subscriberId, int originBrokerId, const Subscription& sub) {
+    storedSubscriptions.push_back({socket, subscriberId, originBrokerId, sub});
+}
+
+void sendNotificationToLocalSubscriberLocked(int subscriberId, const Publication& pub, long long emitTime) {
+    if (deliveredToSubscriber[subscriberId].count(pub.id)) {
+        return;
+    }
+
+    auto it = localSubscriberSockets.find(subscriberId);
+    if (it == localSubscriberSockets.end()) {
+        return;
+    }
+
+    deliveredToSubscriber[subscriberId].insert(pub.id);
+
+    NetworkMessage n;
+    n.type = MessageType::NOTIFICATION;
+    n.payload = serializePublication(pub) + "|" + std::to_string(emitTime);
+
+    sendMsg(it->second, n);
+}
+
+void routeNotificationToOriginLocked(const StoredSubscription& sub, const Publication& pub, long long emitTime) {
+    if (sub.originBrokerId == myBrokerId) {
+        sendNotificationToLocalSubscriberLocked(sub.subscriberId, pub, emitTime);
+        return;
+    }
+
+    if (deliveredToSubscriber[sub.subscriberId].count(pub.id)) {
+        return;
+    }
+
+    deliveredToSubscriber[sub.subscriberId].insert(pub.id);
+
+    if (!brokerSockets.count(sub.originBrokerId)) {
+        std::cout << "[BROKER " << myBrokerId << "] Missing connection to origin B"
+                  << sub.originBrokerId << " for NOTIFICATION id=" << pub.id << "\n";
+        return;
+    }
+
+    NetworkMessage routed;
+    routed.type = MessageType::ROUTED_NOTIFICATION;
+    routed.payload = std::to_string(sub.subscriberId) + "|" +
+                     serializePublication(pub) + "|" +
+                     std::to_string(emitTime);
+
+    sendMsg(brokerSockets[sub.originBrokerId], routed);
+    std::cout << "[BROKER " << myBrokerId << "] Routed NOTIFICATION id=" << pub.id
+              << " for SUB " << sub.subscriberId << " to origin B"
+              << sub.originBrokerId << "\n";
+}
+
+void routeSubscriptionFromClient(int clientSock, int subscriberId, const Subscription& sub) {
+    std::lock_guard<std::mutex> lock(mtx);
+    localSubscriberSockets[subscriberId] = clientSock;
+
+    const SubscriptionField* companyField = findCompanyField(sub);
+
+    if (companyField != nullptr && companyField->op == OperatorType::EQ) {
+        std::vector<int> owners = getCompanyOwners(companyField->stringValue);
+        int targetBroker = myBrokerId;
+
+        if (!owners.empty()) {
+            int cursor = subscriptionRouteCursor[companyField->stringValue]++;
+            targetBroker = owners[cursor % owners.size()];
+        }
+
+        if (targetBroker == myBrokerId) {
+            storeSubscriptionLocked(clientSock, subscriberId, myBrokerId, sub);
+            std::cout << "[BROKER " << myBrokerId << "] Stored local SUBSCRIPTION from SUB "
+                      << subscriberId << " for " << companyField->stringValue << "\n";
+        } else if (brokerSockets.count(targetBroker)) {
+            NetworkMessage routed;
+            routed.type = MessageType::BROKER_SUBSCRIPTION;
+            routed.payload = std::to_string(myBrokerId) + "|" +
+                             std::to_string(subscriberId) + "|" +
+                             serializeSubscription(sub);
+
+            sendMsg(brokerSockets[targetBroker], routed);
+            std::cout << "[BROKER " << myBrokerId << "] Routed SUBSCRIPTION from SUB "
+                      << subscriberId << " for " << companyField->stringValue
+                      << " to B" << targetBroker << "\n";
+        } else {
+            storeSubscriptionLocked(clientSock, subscriberId, myBrokerId, sub);
+            std::cout << "[BROKER " << myBrokerId << "] Stored SUBSCRIPTION locally because B"
+                      << targetBroker << " is unavailable\n";
+        }
+
+        return;
+    }
+
+    storeSubscriptionLocked(clientSock, subscriberId, myBrokerId, sub);
+    std::cout << "[BROKER " << myBrokerId << "] Stored complex SUBSCRIPTION from SUB "
+              << subscriberId << " and replicated through overlay\n";
+
+    for (const auto& [brokerId, sock] : brokerSockets) {
+        NetworkMessage routed;
+        routed.type = MessageType::BROKER_SUBSCRIPTION;
+        routed.payload = std::to_string(myBrokerId) + "|" +
+                         std::to_string(subscriberId) + "|" +
+                         serializeSubscription(sub);
+
+        sendMsg(sock, routed);
+    }
+}
+
+// ============================================================
+void matchAndNotifyLocked(const Publication& pub) {
+    auto now = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+
+    for (auto& sub : storedSubscriptions) {
+        if (matches(pub, sub.subscription)) {
+            routeNotificationToOriginLocked(sub, pub, now);
+        }
+    }
+}
+
+// ============================================================
+bool markPublicationProcessed(long long publicationId) {
+    std::lock_guard<std::mutex> lock(mtx);
+
+    if (processedPublications.count(publicationId)) {
+        return false;
+    }
+
+    processedPublications.insert(publicationId);
+    return true;
 }
 
 // ============================================================
@@ -134,13 +284,12 @@ void handleClient(int clientSock) {
             // broker handshake
             // -------------------------
             if (msg.type == MessageType::BROKER_HELLO) {
-            isBrokerConn = true;
+                isBrokerConn = true;
 
-            int peerId = std::stoi(msg.payload);
-
-            std::lock_guard<std::mutex> lock(mtx);
-            brokerSockets[peerId] = clientSock;
-        }
+                int peerId = std::stoi(msg.payload);
+                std::cout << "[BROKER " << myBrokerId << "] Broker connection accepted from B"
+                          << peerId << "\n";
+            }
 
             // -------------------------
             // subscription
@@ -158,8 +307,47 @@ void handleClient(int clientSock) {
                 }
                 std::cout<<"[BROKER " << myBrokerId << "] Received SUBSCRIPTION from SUB " << subId 
                           << ", company=" << sub.fields[0].stringValue << "\n";
+                routeSubscriptionFromClient(clientSock, subId, sub);
+            }
+
+            else if (msg.type == MessageType::BROKER_SUBSCRIPTION) {
+                size_t firstSep = msg.payload.find('|');
+                size_t secondSep = msg.payload.find('|', firstSep + 1);
+
+                if (firstSep == std::string::npos || secondSep == std::string::npos) {
+                    continue;
+                }
+
+                int originBrokerId = std::stoi(msg.payload.substr(0, firstSep));
+                int subscriberId = std::stoi(msg.payload.substr(firstSep + 1, secondSep - firstSep - 1));
+                Subscription sub = deserializeSubscription(msg.payload.substr(secondSep + 1));
+
                 std::lock_guard<std::mutex> lock(mtx);
-                localSubscribers.push_back({clientSock, subId, sub});
+                storeSubscriptionLocked(-1, subscriberId, originBrokerId, sub);
+
+                const SubscriptionField* companyField = findCompanyField(sub);
+                std::cout << "[BROKER " << myBrokerId << "] Stored routed SUBSCRIPTION for SUB "
+                          << subscriberId << " from origin B" << originBrokerId;
+                if (companyField != nullptr) {
+                    std::cout << ", company=" << companyField->stringValue;
+                }
+                std::cout << "\n";
+            }
+
+            else if (msg.type == MessageType::ROUTED_NOTIFICATION) {
+                size_t firstSep = msg.payload.find('|');
+                size_t lastSep = msg.payload.rfind('|');
+
+                if (firstSep == std::string::npos || lastSep == std::string::npos || firstSep == lastSep) {
+                    continue;
+                }
+
+                int subscriberId = std::stoi(msg.payload.substr(0, firstSep));
+                Publication pub = deserializePublication(msg.payload.substr(firstSep + 1, lastSep - firstSep - 1));
+                long long emitTime = std::stoll(msg.payload.substr(lastSep + 1));
+
+                std::lock_guard<std::mutex> lock(mtx);
+                sendNotificationToLocalSubscriberLocked(subscriberId, pub, emitTime);
             }
 
             // -------------------------
@@ -168,26 +356,40 @@ void handleClient(int clientSock) {
             else if (msg.type == MessageType::PUBLICATION) {
 
                 Publication pub = deserializePublication(msg.payload);
-                std::cout<<"[BROKER " << myBrokerId << "] Received PUBLICATION: " << pub.company 
+                if (!markPublicationProcessed(pub.id)) {
+                    std::cout << "[BROKER " << myBrokerId << "] Duplicate PUBLICATION ignored: id="
+                              << pub.id << "\n";
+                    continue;
+                }
+
+                std::cout<<"[BROKER " << myBrokerId << "] Received PUBLICATION: id=" << pub.id
+                          << " " << pub.company 
                           << " val=" << pub.value << "\n";
                 auto it = companyMap.find(pub.company);
 
                 if (it == companyMap.end()) {
                     // fallback: local only
-                    matchAndNotify(pub);
+                    std::lock_guard<std::mutex> lock(mtx);
+                    matchAndNotifyLocked(pub);
                     continue;
                 }
 
                 const auto& owners = it->second;
 
                 // forward to ALL responsible brokers
+                std::lock_guard<std::mutex> lock(mtx);
                 for (int owner : owners) {
 
                     if (owner == myBrokerId) {
-                        matchAndNotify(pub);
+                        matchAndNotifyLocked(pub);
                     } else {
                         if (brokerSockets.count(owner)) {
                             sendMsg(brokerSockets[owner], msg);
+                            std::cout << "[BROKER " << myBrokerId << "] Forwarded PUBLICATION id="
+                                      << pub.id << " to B" << owner << "\n";
+                        } else {
+                            std::cout << "[BROKER " << myBrokerId << "] Missing connection to B"
+                                      << owner << " for PUBLICATION id=" << pub.id << "\n";
                         }
                     }
                 }
@@ -198,12 +400,20 @@ void handleClient(int clientSock) {
     if (!isBrokerConn) {
         std::lock_guard<std::mutex> lock(mtx);
 
-        localSubscribers.erase(
-            std::remove_if(localSubscribers.begin(), localSubscribers.end(),
-                [&](const SubscriberInfo& s) {
+        for (auto it = localSubscriberSockets.begin(); it != localSubscriberSockets.end(); ) {
+            if (it->second == clientSock) {
+                it = localSubscriberSockets.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        storedSubscriptions.erase(
+            std::remove_if(storedSubscriptions.begin(), storedSubscriptions.end(),
+                [&](const StoredSubscription& s) {
                     return s.socket == clientSock;
                 }),
-            localSubscribers.end()
+            storedSubscriptions.end()
         );
     }
 
@@ -245,11 +455,19 @@ void connectToPeers(const BrokerConfig& cfg) {
             std::this_thread::sleep_for(std::chrono::milliseconds(300));
         }
 
+        int peerId = brokerIdFromPort(port);
+
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            brokerSockets[peerId] = sock;
+        }
+
         NetworkMessage hello;
         hello.type = MessageType::BROKER_HELLO;
         hello.payload = std::to_string(cfg.id);
 
         sendMsg(sock, hello);
+        std::cout << "[BROKER " << myBrokerId << "] Connected to B" << peerId << "\n";
     }
 }
 

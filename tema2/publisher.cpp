@@ -14,7 +14,7 @@
 #include "../src/models.h"
 
 // ============================================================
-//  Lansare: ./publisher <publisher_id> [num_publications] [delay_ms]
+//  Lansare: ./publisher <publisher_id> <num_publications> <num_brokers> [delay_ms]
 //  publisher_id: 1 sau 2
 //  Se conecteaza ALEATORIU la unul dintre cei 3 brokeri
 //  Emite publicatii la interval de delay_ms milisecunde
@@ -25,10 +25,18 @@ int getPort(int brokerIdx) {
 }
 
 int main(int argc, char* argv[]) {
-   int delayMs = 100; // default 100ms intre publicatii
+    if (argc < 4) {
+        std::cerr << "Usage: ./publisher <publisher_id> <num_publications> <num_brokers> [delay_ms]\n";
+        return 1;
+    }
+
+    int delayMs = 100; // default 100ms intre publicatii
     int  publisherId = std::stoi(argv[1]);
     int numPubs = std::stoi(argv[2]);
     int numBrokers = std::stoi(argv[3]);
+    if (argc >= 5) {
+        delayMs = std::stoi(argv[4]);
+    }
 
     // Alegem aleatoriu un broker
     std::mt19937 rng(std::random_device{}());
@@ -63,6 +71,7 @@ int main(int argc, char* argv[]) {
     auto pubs = generatePublicationsSequential(cfg);
 
             Publication& p = pubs[0];
+            p.id = static_cast<long long>(publisherId) * 1000000000LL + i + 1;
 
             NetworkMessage msg;
             msg.type = MessageType::PUBLICATION;

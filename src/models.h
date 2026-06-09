@@ -26,6 +26,7 @@ enum class OperatorType {
 
 // Publication (schema fixa)
 struct Publication {
+    long long id = 0;
     std::string company;
     double value;
     double drop;
