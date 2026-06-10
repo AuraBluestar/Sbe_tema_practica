@@ -1,131 +1,406 @@
-# Random Publications & Subscriptions Generator
+# Content-Based Publish/Subscribe System
 
 ## Descriere
 
-Acest proiect implementeaza un generator de date pentru sisteme de tip publish–subscribe. Programul genereaza:
+Acest proiect implementeaza un sistem publish/subscribe content-based, construit peste generatorul de publicatii si subscriptii realizat anterior.
 
-- Publicatii – cu structura fixa de campuri
-- Subscriptii – cu campuri optionale si frecvente configurabile
+Sistemul contine:
 
-Implementarea permite control asupra:
-- numarului total de pubs/subs
-- frecventei campurilor in subscriptii
-- ponderii operatorilor (ex. "=" pentru `company`)
-- paralelizarii generarii pentru optimizarea performantei
+- Publisheri - noduri care genereaza publicatii random si le trimit catre reteaua de brokeri
+- Brokeri - noduri intermediare care stocheaza subscriptii, fac matching content-based si ruteaza publicatii/notificari
+- Subscriberi - noduri client care genereaza subscriptii random si primesc notificari pentru publicatiile care se potrivesc
+
+Implementarea urmareste cerintele temei:
+
+- 1-2 publisheri care emit fluxuri de publicatii
+- overlay de 2-3 brokeri
+- 2-3 subscriberi care inregistreaza subscriptii
+- routing avansat pentru subscriptii si publicatii
+- evaluare pentru 10000 subscriptii si feed continuu de 3 minute
 
 ---
 
 ## Structura datelor
 
-### Publicatie (structura fixa)
-{(company,"Google");(value,90.0);(drop,10.0);(variation,0.73);(date,02.02.2022)}
+### Publicatie
+
+Publicatia are structura fixa:
+
+```text
+{(id,1000000001);(company,"Google");(value,90.0);(drop,10.0);(variation,0.73);(date,02.02.2022)}
+```
 
 Campuri:
-- company – string, dintr-un set predefinit (models.h)
-- value – double 
-- drop – double 
-- variation – double 
-- date – string, dintr-un set predefinit (models.h)
+
+- `id` - identificator unic folosit pentru deduplicare
+- `company` - string, ales dintr-un set predefinit
+- `value` - double
+- `drop` - double
+- `variation` - double
+- `date` - string, ales dintr-un set predefinit
+
+ID-ul publicatiei este important deoarece aceeasi publicatie poate trece prin mai multi brokeri. Brokerii si subscriberii folosesc ID-ul pentru a evita livrarile duplicate.
 
 ---
 
-### Subscriptie (structura variabila)
+### Subscriptie
+
+Subscriptia are structura variabila:
+
+```text
 {(company,=,"Google");(value,>=,90);(variation,<,0.8)}
+```
 
 Caracteristici:
+
 - campurile pot lipsi
 - frecventa aparitiei campurilor este configurabila
-- pentru campul `company` se impune un procent minim pentru operatorul `=`
-
+- pentru campul `company` se controleaza procentul operatorului `=`
+- operatorii numerici folositi sunt `<`, `<=`, `>`, `>=`
+- operatorii pe string sunt `=` si `!=`
 
 ---
 
-## Paralelizare
+## Arhitectura sistemului
 
-Tip paralelizare:
-- Thread-based (multithreading)
+### Publisher
 
-Implementare:
-- generarea este impartita pe thread-uri
-- fiecare thread genereaza un subset independent - nu este necesara sincronizare
+Fisier principal:
+
+```text
+tema2/publisher.cpp
+```
+
+Publisherul:
+
+- primeste ca parametri ID-ul, numarul de publicatii, numarul de brokeri si delay-ul intre publicatii
+- alege aleator un broker de intrare
+- genereaza publicatii random folosind generatorul din tema anterioara
+- trimite publicatiile catre brokerul ales
+
+Exemplu:
+
+```bash
+./publisher 1 10 3 100
+```
+
+Parametri:
+
+- `1` - ID publisher
+- `10` - numar publicatii
+- `3` - numar brokeri
+- `100` - delay in ms intre publicatii
+
+---
+
+### Subscriber
+
+Fisier principal:
+
+```text
+tema2/subscriber.cpp
+```
+
+Subscriberul:
+
+- genereaza subscriptii random
+- se conecteaza la toti brokerii pentru a putea primi notificari pe brokerul de intrare folosit
+- pentru fiecare subscriptie alege aleator un broker de intrare
+- trimite subscriptia catre brokerul ales
+- primeste notificari si deduplicateaza dupa ID-ul publicatiei
+
+Exemplu:
+
+```bash
+./subscriber 1 10 3 100
+```
+
+Parametri:
+
+- `1` - ID subscriber
+- `10` - numar subscriptii
+- `3` - numar brokeri
+- `100` - procent de subscriptii cu `company = ...`
+
+---
+
+### Broker
+
+Fisier principal:
+
+```text
+tema2/broker.cpp
+```
+
+Brokerul:
+
+- asculta conexiuni de la publisheri, subscriberi si alti brokeri
+- se conecteaza la ceilalti brokeri din overlay
+- stocheaza subscriptii
+- face matching content-based intre publicatii si subscriptii
+- forwardeaza publicatii catre brokerii responsabili pentru compania publicatiei
+- ruteaza subscriptii catre brokerii responsabili
+- intoarce notificari catre brokerul de intrare al subscriberului
+- elimina duplicatele folosind ID-ul publicatiei
+
+Exemplu:
+
+```bash
+./broker 1 3
+./broker 2 3
+./broker 3 3
+```
+
+Parametri:
+
+- primul argument - ID broker
+- al doilea argument - numarul total de brokeri
+
+---
+
+## Routing
+
+### Responsabilitate pe companii
+
+Fiecare companie este asociata determinist cu 1-2 brokeri. Exemplu pentru 3 brokeri:
+
+| Companie | Brokeri responsabili |
+|---|---|
+| Google | B1, B2 |
+| Amazon | B2, B3 |
+| Microsoft | B1, B3 |
+| Apple | B1, B2 |
+| Meta | B2, B3 |
+| Netflix | B1, B3 |
+
+Aceasta impartire permite ca publicatiile sa nu fie procesate de un singur broker central, ci sa treaca prin mai multi brokeri din overlay.
+
+---
+
+### Routing pentru subscriptii
+
+Subscriberul nu decide brokerul final care stocheaza subscriptia. El alege doar un broker de intrare random.
+
+Brokerul de intrare aplica politica de routing:
+
+- pentru `company = X`, subscriptia este trimisa balansat catre unul dintre brokerii responsabili pentru compania `X`
+- pentru subscriptii complexe sau cu `company != X`, subscriptia este stocata local si replicata in overlay
+- brokerul care stocheaza subscriptia retine si brokerul de origine, pentru a putea intoarce notificarea catre subscriber
+
+Astfel, subscriptiile aceluiasi subscriber sunt distribuite pe mai multi brokeri, iar decizia de routing apartine overlay-ului, nu clientului.
+
+---
+
+### Routing pentru publicatii
+
+Publisherul trimite publicatia catre un broker random.
+
+Brokerul care primeste publicatia:
+
+1. verifica daca publicatia a mai fost procesata
+2. determina brokerii responsabili pentru `company`
+3. proceseaza local daca este responsabil
+4. forwardeaza publicatia catre ceilalti brokeri responsabili
+5. brokerii responsabili fac matching local si trimit notificari catre brokerul de origine al subscriberului
+
+Pentru a evita buclele si duplicatele:
+
+- fiecare broker tine `processedPublications`
+- fiecare broker tine `deliveredToSubscriber`
+- fiecare subscriber tine local publicatiile deja primite
+
+---
+
+## Tipuri de mesaje
+
+Mesajele sunt definite in:
+
+```text
+tema2/common/message.h
+```
+
+Tipuri folosite:
+
+- `SUBSCRIPTION` - subscriber catre broker
+- `PUBLICATION` - publisher catre broker sau broker catre broker
+- `NOTIFICATION` - broker catre subscriber
+- `BROKER_HELLO` - identificare conexiuni intre brokeri
+- `BROKER_SUBSCRIPTION` - routing intern pentru subscriptii
+- `ROUTED_NOTIFICATION` - notificare intoarsa catre brokerul de intrare
 
 ---
 
 ## Mod rulare
-Comanda compilare: g++ -Wall -Wextra -g3 src/main.cpp src/publication_generator.cpp src/utils.cpp src/writer.cpp src/subscription_generator.cpp -o main.exe
 
+### Compilare
 
-### Parametri rulare
-- --nrPubs - numar publicații generate
-- --nrSubs - numar subscriptii generate
-- --companyFreq - % subscriptii care contin company
-- --valueFreq - % subscriptii care contin value
-- --dropFreq - % subscriptii care contin drop
-- --variationFreq - % subscriptii care contin variation
-- --dateFreq - % subscriptii care contin date
-- --companyEq - % minim operator = pentru campul company
-- --pubValueMin, --pubValueMax - interval valori value in publicatii
-- --subValueMin, --subValueMax - interval valori value in subscriptii
-- Idem pentru variation si drop referitor la intervalul de valori
+Din directorul `tema2`:
 
+```bash
+bash build.sh
+```
 
-Exemple comanda rulare: ./main --companyFreq 90 --valueFreq 50 --dropFreq 60 --nrPubs 500000 --nrSubs 500000 --eqCompany 40
-./main --nrPubs 500000 --nrSubs 500000 --companyFreq 90 --valueFreq 70 --dropFreq 50 --variationFreq 60 --dateFreq 40 --companyEq 70 --pubValueMin 0 --pubValueMax 100 --subValueMin 10 --subValueMax 90
+Sau din radacina proiectului:
 
-
-Valori default pentru rulare cu "./main" se afla in models.h: numarul de subs/pubs este de 20000 si doar campul company are frecventa de 100%, impreuna cu frecventa de 70% pentru operatorul =.
-Pentru variation, intervalul este (-1,1), si pentru value si drop (0,100). Companiile si datele sunt alese random dintr-un set predefinit.
+```bash
+bash build.sh
+```
 
 ---
 
-## Evaluare performanta
-Testele au fost facute pentru 1 thread, respectiv 4 threaduri.
+### Rulare manuala
 
-### Configuratie hardware
-- **Procesor:** Intel(R) Core(TM) i7-8700 CPU (6 nuclee fizice, 12 procesoare logice)
-- **RAM:** 16 GB
-- **OS:** Windows 11 
+Se pornesc mai intai brokerii:
 
-### Parametri
-| Parametru | Valoare |
+```bash
+./broker 1 3
+./broker 2 3
+./broker 3 3
+```
+
+Apoi subscriberii:
+
+```bash
+./subscriber 1 10 3 100
+./subscriber 2 10 3 100
+```
+
+Apoi publisherul:
+
+```bash
+./publisher 1 10 3 100
+```
+
+---
+
+### Rulare automata
+
+Pentru a evita pornirea manuala in mai multe terminale, exista scriptul:
+
+```text
+tema2/run_system.sh
+```
+
+Exemplu:
+
+```bash
+bash run_system.sh 3 2 1 10 10 100 100
+```
+
+Parametri:
+
+| Parametru | Semnificatie |
 |---|---|
-| Frecvență company | 90% |
-| Frecvență value | 50% |
-| Frecvență drop | 60% |
-| Procent EQ company* | 70% | 
+| `3` | numar brokeri |
+| `2` | numar subscriberi |
+| `1` | numar publisheri |
+| `10` | subscriptii per subscriber |
+| `10` | publicatii per publisher |
+| `100` | procent `company = ...` |
+| `100` | delay publisher in ms |
 
-Procentul EQ company este cel default (70%) din cod, asadar nu e inclus in comanda de rulare.
-### Rezultate test 1 - numar pubs/subs 20000 (numar default)
+Scriptul:
 
-| Scenariul | Nr. threaduri | Timp generare | Timp scriere | Timp total |
-|---|---|---|---|---|
-| Fără scriere | 1 | 0.0341 sec | - | 0.0341 sec |
-| Fără scriere | 4 | 0.0207 sec | - | 0.0207 sec |
-| Cu scriere | 1 | 0.0347 sec | 0.0998 sec | 0.1346 sec |
-| Cu scriere | 4 | 0.0222 sec | 0.0967 sec | 0.1189 sec |
+- compileaza executabilele
+- opreste procese vechi
+- porneste brokerii
+- porneste subscriberii
+- porneste publisherii
+- salveaza loguri in `tema2/logs/`
+- afiseaza un sumar cu notificari, forward-uri, duplicate si rutarea subscriptiilor
 
+---
 
-Comanda rulare test 1: ./main --companyFreq 90 --valueFreq 50 --dropFreq 60 
+## Evaluare
 
+Evaluarea automata este facuta cu:
 
-### Rezultate test 2 - numar pubs/ subs 500000
-| Scenariul | Nr. threaduri | Timp generare | Timp scriere | Timp total |
-|---|---|---|---|---|
-| Fără scriere | 1 | 0.8540 sec | - | 0.8540 sec |
-| Fără scriere | 4 | 0.4340 sec | - | 0.4340 sec |
-| Cu scriere | 1 | 0.8523 sec | 2.4409 sec | 3.2932 sec |
-| Cu scriere | 4 | 0.4469 sec | 2.3905 sec | 2.8374 sec |
+```text
+tema2/run_evaluation.sh
+```
 
+Comanda folosita pentru testul final:
 
-Comanda rulare test 2: ./main --companyFreq 90 --valueFreq 50 --dropFreq 60 --nrPubs 500000 --nrSubs 500000                               
+```bash
+bash run_evaluation.sh 3 3 1 180 10000 10 8
+```
 
+Parametri:
+
+| Parametru | Valoare | Semnificatie |
+|---|---:|---|
+| Brokeri | 3 | overlay cu 3 noduri broker |
+| Subscriberi | 3 | noduri subscriber simulate |
+| Publisheri | 1 | nod publisher activ |
+| Durata | 180 sec | feed continuu de 3 minute |
+| Subscriptii | 10000 | numar total de subscriptii |
+| Delay publisher | 10 ms | interval intre doua publicatii |
+| Stabilizare | 8 sec | timp pentru inregistrarea subscriptiilor inainte de feed |
+
+Scriptul ruleaza doua scenarii:
+
+- `company = ...` in 100% dintre subscriptii
+- `company = ...` in aproximativ 25% dintre subscriptii
+
+---
+
+## Rezultate evaluare
+
+Rezultatele obtinute pentru rularea de 3 minute:
+
+| Scenariu | Publicatii trimise | Publicatii unice livrate | Notificari livrate | Latenta medie | Matching rate |
+|---|---:|---:|---:|---:|---:|
+| Company EQ 100% | 18000 | 18000 | 50542 | 1003.44 us  | 0.028073% |
+| Company EQ 25% | 18000 | 18000 | 54000 | 1178.42 us | 0.029994% |
+
+Matching rate este calculata ca:
+
+```text
+notificari_livrate / (publicatii_trimise * subscriptii_generate) * 100
+```
+
+---
+
+## Comparatie 100% EQ vs 25% EQ
+
+In scenariul 100% EQ, fiecare subscriptie contine o conditie stricta de forma:
+
+```text
+company = X
+```
+
+O publicatie se potriveste doar cu subscriptiile care cer exact compania publicatiei.
+
+In scenariul 25% EQ, doar un sfert dintre subscriptii folosesc operatorul `=`, iar restul folosesc in principal conditii de tip:
+
+```text
+company != X
+```
+
+Aceste conditii sunt mai largi, deoarece o subscriptie `company != Google` se potriveste cu publicatii pentru Amazon, Microsoft, Apple etc. Din acest motiv, numarul total de notificari livrate si matching rate-ul sunt mai mari in cazul 25% EQ.
+
+Comparatie observata:
+
+- 100% EQ: 50542 notificari livrate
+- 25% EQ: 54000 notificari livrate
+
+Diferenta confirma ca scaderea frecventei operatorului de egalitate creste numarul de potriviri.
 
 ---
 
 ## Analiza
 
-- Speedup la generare (1 sau 4 threaduri): 0.8540 fata de 0.4340 pentru 500000 sub/pub
-- Scrierea in fisier domina timpul total 
-- La volume mai mari (ex: 500.000 mesaje) diferenta dintre 1 si 4 threaduri devine mai pronuntata
+- Toate cele 18000 publicatii au fost livrate catre cel putin un subscriber in ambele scenarii.
+- Publicatiile trec prin mai multi brokeri, lucru vizibil in logurile `Forwarded PUBLICATION`.
+- Subscriptiile sunt rutate prin overlay, lucru vizibil in logurile `Routed SUBSCRIPTION` si `Stored routed SUBSCRIPTION`.
+- Deduplicarea functioneaza pe baza ID-ului de publicatie.
+- Latenta medie ramane in ordinul microsecundelor/milisecundelor mici pentru rularea locala.
+- Scenariul 25% EQ produce mai multe match-uri deoarece operatorul `!=` este mai permisiv decat `=`.
 
-** Rezultatele din fisierele de output sunt pentru comanda: ./main --nrPubs 500000 --nrSubs 500000 --companyFreq 90 --valueFreq 70 --dropFreq 50 --variationFreq 60 --dateFreq 40 --companyEq 70 --pubValueMin 0 --pubValueMax 100 --subValueMin 10 --subValueMax 90    
+---
+
+## Observatii despre implementare
+
+Implementarea foloseste socket-uri TCP locale si thread-uri pentru conexiuni. Fiecare broker accepta conexiuni de la publisheri, subscriberi si peer brokeri. Pentru testare si evaluare, scripturile automatizeaza pornirea proceselor si colectarea logurilor.
+
+Logurile generate nu sunt versionate, fiind ignorate prin `.gitignore`.
